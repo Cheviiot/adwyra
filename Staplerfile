@@ -80,8 +80,8 @@ package() {
     install-desktop "${srcdir}/adwyra/data/com.github.adwyra.launcher.desktop"
     
     # Иконка
-    install -Dm644 "${srcdir}/adwyra/data/icons/hicolor/scalable/apps/com.github.adwyra.launcher.svg" \
-        "${pkgdir}/usr/share/icons/hicolor/scalable/apps/com.github.adwyra.launcher.svg"
+    install -Dm644 "${srcdir}/adwyra/data/icons/hicolor/256x256/apps/com.github.adwyra.launcher.png" \
+        "${pkgdir}/usr/share/icons/hicolor/256x256/apps/com.github.adwyra.launcher.png"
     
     # AppStream metainfo
     install -Dm644 "${srcdir}/adwyra/data/com.github.adwyra.launcher.metainfo.xml" \
@@ -96,7 +96,7 @@ files() {
         "/usr/bin/adwyra" \
         "/usr/lib/adwyra/**/*" \
         "/usr/share/applications/com.github.adwyra.launcher.desktop" \
-        "/usr/share/icons/hicolor/scalable/apps/com.github.adwyra.launcher.svg" \
+        "/usr/share/icons/hicolor/256x256/apps/com.github.adwyra.launcher.png" \
         "/usr/share/metainfo/com.github.adwyra.launcher.metainfo.xml" \
         "/usr/share/licenses/LICENSE"
 }
