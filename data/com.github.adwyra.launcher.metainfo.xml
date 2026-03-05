@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.github.adwyra.launcher</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  
+  <name>Adwyra</name>
+  <name xml:lang="ru">Adwyra</name>
+  
+  <summary>Application launcher inspired by macOS Launchpad</summary>
+  <summary xml:lang="ru">Лаунчер приложений в стиле macOS Launchpad</summary>
+  
+  <description>
+    <p>
+      Adwyra is a modern application launcher for Linux desktops,
+      inspired by macOS Launchpad. It provides a beautiful grid view of all
+      your installed applications with instant search and pinning support.
+    </p>
+    <p xml:lang="ru">
+      Adwyra — современный лаунчер приложений для Linux,
+      вдохновлённый macOS Launchpad. Показывает все установленные приложения
+      в виде красивой сетки с мгновенным поиском и возможностью закрепления.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Grid view of all applications with icons</li>
+      <li>Pin favorite apps (right-click menu)</li>
+      <li>Live search filtering</li>
+      <li>Native GNOME/Adwaita look and feel</li>
+      <li>Keyboard shortcuts (Ctrl+F for search, Esc to close)</li>
+      <li>Auto-close on focus loss</li>
+    </ul>
+  </description>
+  
+  <categories>
+    <category>Utility</category>
+    <category>GTK</category>
+  </categories>
+  
+  <keywords>
+    <keyword>launcher</keyword>
+    <keyword>applications</keyword>
+    <keyword>launchpad</keyword>
+    <keyword xml:lang="ru">лаунчер</keyword>
+    <keyword xml:lang="ru">приложения</keyword>
+  </keywords>
+  
+  <url type="homepage">https://github.com/cheviiot/adwyra</url>
+  <url type="bugtracker">https://github.com/cheviiot/adwyra/issues</url>
+  
+  <launchable type="desktop-id">com.github.adwyra.launcher.desktop</launchable>
+  
+  <provides>
+    <binary>adwyra</binary>
+  </provides>
+  
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+  
+  <recommends>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </recommends>
+  
+  <content_rating type="oars-1.1" />
+  
+  <releases>
+    <release version="0.1.0" date="2026-03-05">
+      <description>
+        <p>Major update with new features:</p>
+        <ul>
+          <li>Application categories with sidebar navigation</li>
+          <li>Favorites management (right-click to add/remove)</li>
+          <li>Recent applications tracking</li>
+          <li>Improved animations and hover effects</li>
+          <li>Context menu support</li>
+          <li>Better window sizing</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.1.0" date="2026-03-05">
+      <description>
+        <p>Initial release with basic features:</p>
+        <ul>
+          <li>Grid view of applications</li>
+          <li>Live search</li>
+          <li>Application launching</li>
+          <li>Auto-close on focus loss</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+  
+  <developer_name>Cheviiot</developer_name>
+</component>

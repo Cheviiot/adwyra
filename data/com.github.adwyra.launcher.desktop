@@ -1,0 +1,16 @@
+[Desktop Entry]
+Name=Adwyra
+Name[ru]=Adwyra
+GenericName=Application Launcher
+GenericName[ru]=Запуск приложений
+Comment=Launch applications like macOS Launchpad
+Comment[ru]=Запуск приложений в стиле macOS Launchpad
+Exec=adwyra
+Icon=adwyra
+Terminal=false
+Type=Application
+Categories=GNOME;GTK;Utility;
+Keywords=launcher;apps;applications;launchpad;
+Keywords[ru]=лаунчер;приложения;запуск;
+StartupNotify=true
+StartupWMClass=adwyra-launcher

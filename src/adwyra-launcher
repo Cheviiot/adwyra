@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Adwyra Launcher — аналог Launchpad macOS для Linux
+Главный модуль приложения
+"""
+
+import sys
+import os
+
+# Добавляем путь к модулям
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from adwyra.app import main
+
+if __name__ == "__main__":
+    sys.exit(main())
