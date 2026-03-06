@@ -10,12 +10,17 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gtk, Gdk, Gio, GLib
+import json
+import urllib.request
+import threading
 
 from .. import __version__, __app_name__
 from ..core import config, folders, SearchService
 from ..core.apps import app_service
 from ..core.favorites import get_gnome_dock_apps
 from .widgets import AppGrid, SearchBar
+
+GITHUB_API_URL = "https://api.github.com/repos/Cheviiot/Adwyra/tags"
 
 # GSettings схемы
 GSETTINGS_MEDIA_KEYS = "org.gnome.settings-daemon.plugins.media-keys"
@@ -820,6 +825,8 @@ class MainWindow(Adw.ApplicationWindow):
     def _show_about(self, btn):
         """Показать страницу О программе."""
         self._stack.set_visible_child_name("about")
+        # Автоматически проверяем обновления при открытии
+        self._check_updates()
     
     def _build_about_page(self):
         """Создать страницу О программе."""
@@ -870,9 +877,15 @@ class MainWindow(Adw.ApplicationWindow):
         version_label.set_halign(Gtk.Align.CENTER)
         box.append(version_label)
         
+        # Статус обновлений
+        self._update_status = Gtk.Label(label="")
+        self._update_status.set_halign(Gtk.Align.CENTER)
+        self._update_status.set_margin_top(4)
+        box.append(self._update_status)
+        
         desc_label = Gtk.Label(label="Минималистичный лаунчер приложений для GNOME")
         desc_label.set_halign(Gtk.Align.CENTER)
-        desc_label.set_margin_top(4)
+        desc_label.set_margin_top(8)
         desc_label.set_wrap(True)
         box.append(desc_label)
         
@@ -893,3 +906,62 @@ class MainWindow(Adw.ApplicationWindow):
         box.append(license_label)
         
         return box
+    
+    def _check_updates(self):
+        """Проверить наличие обновлений через GitHub API."""
+        self._update_status.set_label("Проверка обновлений...")
+        self._update_status.remove_css_class("success")
+        self._update_status.remove_css_class("warning")
+        self._update_status.add_css_class("dim-label")
+        
+        def fetch():
+            try:
+                req = urllib.request.Request(
+                    GITHUB_API_URL,
+                    headers={"User-Agent": "Adwyra"}
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read().decode())
+                    if data and len(data) > 0:
+                        latest = data[0]["name"]
+                        if latest.startswith("v"):
+                            latest = latest[1:]
+                        GLib.idle_add(self._on_update_result, latest, None)
+                    else:
+                        GLib.idle_add(self._on_update_result, None, "Нет тегов")
+            except Exception as e:
+                GLib.idle_add(self._on_update_result, None, str(e))
+        
+        thread = threading.Thread(target=fetch, daemon=True)
+        thread.start()
+    
+    def _on_update_result(self, latest_version, error):
+        """Обработка результата проверки обновлений."""
+        self._update_status.remove_css_class("dim-label")
+        
+        if error:
+            self._update_status.set_label(f"⚠ Ошибка: {error[:30]}")
+            self._update_status.add_css_class("warning")
+            return
+        
+        current = __version__
+        if self._compare_versions(latest_version, current) > 0:
+            self._update_status.set_label(f"🔄 Доступно: v{latest_version}")
+            self._update_status.add_css_class("warning")
+        else:
+            self._update_status.set_label("✓ Актуальная версия")
+            self._update_status.add_css_class("success")
+    
+    def _compare_versions(self, v1, v2):
+        """Сравнить версии. Возвращает >0 если v1 > v2."""
+        def parse(v):
+            return [int(x) for x in v.split(".")]
+        try:
+            parts1 = parse(v1)
+            parts2 = parse(v2)
+            for a, b in zip(parts1, parts2):
+                if a != b:
+                    return a - b
+            return len(parts1) - len(parts2)
+        except:
+            return 0

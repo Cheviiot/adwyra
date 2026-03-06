@@ -68,3 +68,12 @@ window.background {
 .dimmed:hover {
     opacity: 1;
 }
+
+/* Статус обновлений */
+.success {
+    color: @success_color;
+}
+
+.warning {
+    color: @warning_color;
+}

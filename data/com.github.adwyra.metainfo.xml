@@ -69,6 +69,15 @@
   <content_rating type="oars-1.1" />
   
   <releases>
+    <release version="0.3.4" date="2026-03-07">
+      <description>
+        <p>Новое:</p>
+        <ul>
+          <li>Автоматическая проверка обновлений через GitHub API</li>
+          <li>Отображение версии и статуса на странице «О программе»</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.3.3" date="2026-03-07">
       <description>
         <p>Исправления:</p>
