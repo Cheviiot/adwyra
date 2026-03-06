@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Попап папки."""
+"""Всплывающее окно папки.
+
+Содержит компоненты для отображения содержимого папки
+и управления её приложениями.
+"""
 
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gtk, Gdk, Gio, GLib, GObject
+from gi.repository import Adw, Gtk, Gdk, Gio, GLib, GObject, Pango
 
 from ..core import config, folders
 
@@ -35,16 +39,21 @@ class FolderAppTile(Gtk.Button):
         box.set_halign(Gtk.Align.CENTER)
         self.set_child(box)
         
+        # Контейнер для закругления иконки
+        icon_frame = Gtk.Frame()
+        icon_frame.set_halign(Gtk.Align.CENTER)
+        icon_frame.add_css_class("icon-frame")
+        icon_frame.set_overflow(Gtk.Overflow.HIDDEN)
+        
         icon = Gtk.Image.new_from_gicon(
             self.app_info.get_icon() or Gio.ThemedIcon.new("application-x-executable")
         )
         icon.set_pixel_size(config.get("icon_size"))
-        icon.add_css_class("app-icon")
-        icon.set_overflow(Gtk.Overflow.HIDDEN)
-        box.append(icon)
+        icon_frame.set_child(icon)
+        box.append(icon_frame)
         
         label = Gtk.Label(label=self.app_info.get_display_name() or "")
-        label.set_ellipsize(3)
+        label.set_ellipsize(Pango.EllipsizeMode.END)
         label.set_max_width_chars(12)
         box.append(label)
     
@@ -91,7 +100,13 @@ class FolderPopup(Adw.Window):
         self._populate()
         self._setup_events()
         
-        folders.connect("changed", self._on_changed)
+        self._folders_handler = folders.connect("changed", self._on_changed)
+        self.connect("destroy", self._on_destroy)
+    
+    def _on_destroy(self, widget):
+        if self._folders_handler:
+            folders.disconnect(self._folders_handler)
+            self._folders_handler = None
     
     def _build(self):
         data = folders.get(self.folder_id) or {}
@@ -110,6 +125,7 @@ class FolderPopup(Adw.Window):
         # Название
         self._title_btn = Gtk.Button()
         self._title_btn.add_css_class("flat")
+        self._title_btn.add_css_class("dimmed")
         self._title_label = Gtk.Label(label=data.get("name", "Папка"))
         self._title_label.add_css_class("title-3")
         self._title_btn.set_child(self._title_label)
@@ -191,36 +207,93 @@ class FolderPopup(Adw.Window):
     def _rename(self, btn):
         data = folders.get(self.folder_id) or {}
         
-        dialog = Adw.MessageDialog.new(self, "Переименовать")
-        dialog.add_response("cancel", "Отмена")
-        dialog.add_response("ok", "OK")
-        dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_size(280, -1)
+        dialog = Gtk.Window()
+        dialog.set_transient_for(self)
+        dialog.set_modal(True)
+        dialog.set_decorated(False)
+        dialog.set_resizable(False)
+        dialog.add_css_class("compact-dialog")
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.set_margin_top(12)
+        box.set_margin_bottom(12)
+        box.set_margin_start(12)
+        box.set_margin_end(12)
+        
+        title = Gtk.Label(label="Переименовать")
+        title.add_css_class("heading")
+        box.append(title)
         
         entry = Gtk.Entry()
         entry.set_text(data.get("name", ""))
-        entry.set_margin_start(12)
-        entry.set_margin_end(12)
-        dialog.set_extra_child(entry)
+        entry.set_width_chars(18)
+        box.append(entry)
         
-        def on_resp(d, r):
-            if r == "ok" and entry.get_text().strip():
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_box.set_halign(Gtk.Align.END)
+        btn_box.set_margin_top(4)
+        
+        cancel_btn = Gtk.Button(label="Отмена")
+        cancel_btn.connect("clicked", lambda b: dialog.close())
+        btn_box.append(cancel_btn)
+        
+        ok_btn = Gtk.Button(label="OK")
+        ok_btn.add_css_class("suggested-action")
+        
+        def on_ok(b):
+            if entry.get_text().strip():
                 folders.rename(self.folder_id, entry.get_text().strip())
+            dialog.close()
         
-        dialog.connect("response", on_resp)
+        ok_btn.connect("clicked", on_ok)
+        entry.connect("activate", on_ok)
+        btn_box.append(ok_btn)
+        
+        box.append(btn_box)
+        dialog.set_child(box)
         dialog.present()
+        entry.grab_focus()
     
     def _delete(self, btn):
-        dialog = Adw.MessageDialog.new(self, "Удалить папку?")
-        dialog.set_body("Приложения вернутся в сетку.")
-        dialog.add_response("cancel", "Отмена")
-        dialog.add_response("delete", "Удалить")
-        dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.set_default_size(280, -1)
+        dialog = Gtk.Window()
+        dialog.set_transient_for(self)
+        dialog.set_modal(True)
+        dialog.set_decorated(False)
+        dialog.set_resizable(False)
+        dialog.add_css_class("compact-dialog")
         
-        def on_resp(d, r):
-            if r == "delete":
-                folders.delete(self.folder_id)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_margin_top(12)
+        box.set_margin_bottom(12)
+        box.set_margin_start(12)
+        box.set_margin_end(12)
         
-        dialog.connect("response", on_resp)
+        title = Gtk.Label(label="Удалить папку?")
+        title.add_css_class("heading")
+        box.append(title)
+        
+        desc = Gtk.Label(label="Приложения вернутся в сетку")
+        desc.add_css_class("dim-label")
+        box.append(desc)
+        
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_box.set_halign(Gtk.Align.END)
+        btn_box.set_margin_top(8)
+        
+        cancel_btn = Gtk.Button(label="Отмена")
+        cancel_btn.connect("clicked", lambda b: dialog.close())
+        btn_box.append(cancel_btn)
+        
+        del_btn = Gtk.Button(label="Удалить")
+        del_btn.add_css_class("destructive-action")
+        
+        def on_delete(b):
+            folders.delete(self.folder_id)
+            dialog.close()
+        
+        del_btn.connect("clicked", on_delete)
+        btn_box.append(del_btn)
+        
+        box.append(btn_box)
+        dialog.set_child(box)
         dialog.present()

@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Тайл папки."""
+"""Тайл папки.
+
+Отображает превью 3x3 из иконок приложений внутри папки
+и принимает drop приложений для добавления в папку.
+"""
 
 import gi
 gi.require_version("Gtk", "4.0")
 
-from gi.repository import Gtk, Gdk, Gio, GObject
+from gi.repository import Gtk, Gdk, Gio, GObject, Pango
 
 from ...core import config, folders, favorites
 
@@ -23,6 +27,7 @@ class FolderTile(Gtk.Button):
     def __init__(self, folder_id: str):
         super().__init__()
         self.folder_id = folder_id
+        self._folders_handler = None
         
         self.add_css_class("flat")
         
@@ -31,7 +36,13 @@ class FolderTile(Gtk.Button):
         self._setup_menu()
         
         self.connect("clicked", lambda b: self.emit("open", folder_id))
-        folders.connect("changed", self._refresh)
+        self._folders_handler = folders.connect("changed", self._refresh)
+        self.connect("destroy", self._on_destroy)
+    
+    def _on_destroy(self, widget):
+        if self._folders_handler:
+            folders.disconnect(self._folders_handler)
+            self._folders_handler = None
     
     def _build(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -50,7 +61,7 @@ class FolderTile(Gtk.Button):
         
         # Название
         self._label = Gtk.Label()
-        self._label.set_ellipsize(3)
+        self._label.set_ellipsize(Pango.EllipsizeMode.END)
         self._label.set_max_width_chars(12)
         box.append(self._label)
         
@@ -65,16 +76,21 @@ class FolderTile(Gtk.Button):
         preview_size = config.get("icon_size") // 3
         
         for i in range(9):
-            row, col = divmod(i, 3)
+            row, col = i // 3, i % 3
+            
+            # Контейнер для закругления
+            frame = Gtk.Frame()
+            frame.add_css_class("icon-frame-small")
+            frame.set_overflow(Gtk.Overflow.HIDDEN)
+            
             img = Gtk.Image()
             if i < len(apps):
                 info = Gio.DesktopAppInfo.new(apps[i])
                 if info and info.get_icon():
                     img = Gtk.Image.new_from_gicon(info.get_icon())
             img.set_pixel_size(preview_size)
-            img.add_css_class("app-icon")
-            img.set_overflow(Gtk.Overflow.HIDDEN)
-            self._grid.attach(img, col, row, 1, 1)
+            frame.set_child(img)
+            self._grid.attach(frame, col, row, 1, 1)
     
     def _setup_drop(self):
         drop = Gtk.DropTarget.new(str, Gdk.DragAction.MOVE)

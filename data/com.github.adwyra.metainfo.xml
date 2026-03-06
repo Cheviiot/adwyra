@@ -69,6 +69,24 @@
   <content_rating type="oars-1.1" />
   
   <releases>
+    <release version="0.3.0" date="2026-03-07">
+      <description>
+        <p>Новые функции:</p>
+        <ul>
+          <li>Локальное переименование приложений (псевдонимы)</li>
+          <li>Кнопка закрытия в заголовке</li>
+          <li>Приглушённые служебные кнопки с анимацией</li>
+          <li>Единый кэш в ~/.config/adwyra/</li>
+          <li>Pycache в ~/.cache/adwyra/</li>
+        </ul>
+        <p>Исправления:</p>
+        <ul>
+          <li>Поиск активируется только по клику</li>
+          <li>Обновление в реальном времени при перемещении в папку</li>
+          <li>Закругление иконок через Frame</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.1" date="2026-03-06">
       <description>
         <p>Улучшения:</p>

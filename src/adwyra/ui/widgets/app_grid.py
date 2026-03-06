@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Сетка приложений с пагинацией."""
+"""Сетка приложений с пагинацией.
+
+Использует Adw.Carousel для переключения страниц
+с индикаторыми-точками.
+"""
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -29,22 +33,29 @@ class AppGrid(Gtk.Box):
     def __init__(self):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self._apps: list[Gio.AppInfo] = []
+        self._favorites_handler = None
         
         self._build()
-        favorites.connect("changed", lambda f: self._populate())
+        self._favorites_handler = favorites.connect("changed", lambda f: self._populate())
+        self.connect("destroy", self._on_destroy)
+    
+    def _on_destroy(self, widget):
+        if self._favorites_handler:
+            favorites.disconnect(self._favorites_handler)
+            self._favorites_handler = None
     
     def _build(self):
         # Carousel
         self._carousel = Adw.Carousel()
         self._carousel.set_allow_scroll_wheel(True)
         self._carousel.set_allow_mouse_drag(True)
-        self._carousel.set_vexpand(True)
+        self._carousel.set_vexpand(False)
         self.append(self._carousel)
         
         # Индикатор (точки)
         self._dots = Adw.CarouselIndicatorDots()
         self._dots.set_carousel(self._carousel)
-        self._dots.set_margin_bottom(16)
+        self._dots.set_margin_bottom(8)
         self.append(self._dots)
     
     def set_apps(self, apps: list[Gio.AppInfo]):

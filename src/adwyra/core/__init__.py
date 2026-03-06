@@ -6,3 +6,4 @@ from .apps import AppService
 from .favorites import favorites
 from .folders import folders
 from .search import SearchService
+from .aliases import aliases

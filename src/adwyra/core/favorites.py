@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Управление избранными приложениями."""
+"""Управление закреплёнными приложениями.
+
+Поддерживает собственный список избранных и интеграцию
+с GNOME Shell Dock через GSettings.
+"""
 
 import json
 import os
@@ -25,7 +29,7 @@ class Favorites(GObject.Object):
     
     def __init__(self):
         super().__init__()
-        self._dir = os.path.join(GLib.get_user_data_dir(), "adwyra")
+        self._dir = os.path.join(GLib.get_user_config_dir(), "adwyra")
         self._path = os.path.join(self._dir, "favorites.json")
         self._apps: list[str] = self._load()
     

@@ -1,35 +1,50 @@
 # Adwyra
 
-**Минималистичный лаунчер приложений для Gnome**
+<p align="center">
+  <img src="data/icons/hicolor/128x128/apps/com.github.adwyra.png" alt="Adwyra" width="128">
+</p>
 
-<p>
+<p align="center">
+  <strong>Минималистичный лаунчер приложений для GNOME</strong>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/GTK-4.0-green?style=flat-square" alt="GTK 4">
   <img src="https://img.shields.io/badge/Libadwaita-1.0-blue?style=flat-square" alt="Libadwaita">
-  <img src="https://img.shields.io/badge/Python-3.10+-yellow?style=flat-square" alt="Python">
+  <img src="https://img.shields.io/badge/Python-3.12+-yellow?style=flat-square" alt="Python">
   <img src="https://img.shields.io/badge/License-GPL--3.0-red?style=flat-square" alt="License">
 </p>
 
+---
+
 ## Возможности
 
-- **Сетка приложений** — настраиваемый размер иконок и количество колонок/строк
-- **Папки** — перетащите приложение на другое для группировки
-- **Поиск** — мгновенный поиск по названию
-- **Скрытие Dock-приложений** — не показывать закреплённые в GNOME Dock
-- **Автозакрытие** — при запуске приложения или потере фокуса
+- 📱 **Сетка приложений** — настраиваемый размер иконок и сетки
+- 📁 **Папки** — группировка перетаскиванием
+- 🔍 **Поиск** — мгновенный поиск по названию
+- ✏️ **Переименование** — локальные псевдонимы приложений
+- ⭐ **Закрепление** — избранные приложения всегда первые
+- 🎨 **Темы** — автоматическая, светлая, тёмная
+- ⚡ **Автозакрытие** — при запуске или потере фокуса
 
 ## Установка
 
+### Stapler
+
 ```bash
-# Stapler
 stplr repo add adwyra https://github.com/cheviiot/adwyra.git
 stplr refresh && stplr install adwyra
+```
 
-# Вручную
+### Вручную
+
+```bash
 git clone https://github.com/cheviiot/adwyra.git
 cd adwyra && ./adwyra
 ```
 
-### Зависимости
+<details>
+<summary><strong>Зависимости</strong></summary>
 
 | Дистрибутив | Команда |
 |-------------|---------|
@@ -38,29 +53,27 @@ cd adwyra && ./adwyra
 | Arch | `sudo pacman -S python-gobject gtk4 libadwaita` |
 | ALT Linux | `sudo apt-get install python3-module-pygobject3 libgtk4 libadwaita` |
 
+</details>
+
 ## Использование
 
 ```bash
-adwyra          # Запуск
+adwyra          # Открыть
 adwyra --toggle # Показать/скрыть
-adwyra --show   # Показать
-adwyra --hide   # Скрыть
 ```
 
-### Горячая клавиша
+**Совет:** назначьте `adwyra --toggle` на горячую клавишу в настройках GNOME или прямо в приложении.
 
-Назначьте `adwyra --toggle` на системный шорткат через Настройки → Горячая клавиша.
-
-### Управление
+## Управление
 
 | Действие | Способ |
 |----------|--------|
-| Запуск | Клик по приложению |
-| Создать папку | Перетащить приложение на другое |
-| Удалить из папки | ПКМ → Удалить |
-| Удалить папку | Кнопка корзины в заголовке |
-| Настройки | Кнопка ⚙ справа снизу |
-| Закрыть | `Esc` или клик вне окна |
+| Запустить | Клик |
+| Создать папку | Перетащить на приложение |
+| Переименовать | ПКМ → Переименовать |
+| Закрепить | ПКМ → Закрепить |
+| Настройки | Кнопка ⚙ |
+| Закрыть | `Esc` |
 
 ## Лицензия
 

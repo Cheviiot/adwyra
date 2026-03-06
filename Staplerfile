@@ -2,8 +2,8 @@
 # Staplerfile для Adwyra
 
 name='adwyra'
-version='0.2.0'
-release=2
+version='0.3.0'
+release=1
 summary='Elegant application launcher for Linux'
 desc='Adwyra is a minimalist and fast way to launch applications.
 A beautiful grid of icons, instant search, app folders, pages,
@@ -19,6 +19,13 @@ deps=(
     'python3'
     'gtk4'
     'libadwaita'
+)
+
+# Скрипты установки/удаления
+scripts=(
+    ['preinstall']='scripts/preinstall.sh'
+    ['postinstall']='scripts/postinstall.sh'
+    ['postremove']='scripts/postremove.sh'
 )
 deps_debian=(
     'python3'
@@ -64,12 +71,15 @@ checksums=(
 appstream_app_id='com.github.adwyra'
 
 package() {
+    # GitHub создаёт архив с именем репозитория (Adwyra)
+    src="${srcdir}/Adwyra-${version}"
+    
     # Бинарный файл
-    install -Dm755 "${srcdir}/adwyra-${version}/adwyra" "${pkgdir}/usr/bin/adwyra"
+    install -Dm755 "${src}/adwyra" "${pkgdir}/usr/bin/adwyra"
     
     # Python модуль
     install -dm755 "${pkgdir}/usr/lib/adwyra"
-    cp -r "${srcdir}/adwyra-${version}/src/adwyra" "${pkgdir}/usr/lib/adwyra/"
+    cp -r "${src}/src/adwyra" "${pkgdir}/usr/lib/adwyra/"
     find "${pkgdir}/usr/lib/adwyra" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
     
     # Обновляем путь в бинарнике
@@ -77,49 +87,39 @@ package() {
         "${pkgdir}/usr/bin/adwyra"
     
     # Desktop файл
-    install-desktop "${srcdir}/adwyra-${version}/data/com.github.adwyra.desktop"
+    install-desktop "${src}/data/com.github.adwyra.desktop"
     
     # Иконки всех размеров
     for size in 16 24 32 48 64 128 256 512; do
-        install -Dm644 "${srcdir}/adwyra-${version}/data/icons/hicolor/${size}x${size}/apps/com.github.adwyra.png" \
+        install -Dm644 "${src}/data/icons/hicolor/${size}x${size}/apps/com.github.adwyra.png" \
             "${pkgdir}/usr/share/icons/hicolor/${size}x${size}/apps/com.github.adwyra.png"
     done
     
     # AppStream metainfo
-    install -Dm644 "${srcdir}/adwyra-${version}/data/com.github.adwyra.metainfo.xml" \
+    install -Dm644 "${src}/data/com.github.adwyra.metainfo.xml" \
         "${pkgdir}/usr/share/metainfo/com.github.adwyra.metainfo.xml"
     
     # Лицензия
-    install-license "${srcdir}/adwyra-${version}/LICENSE"
-}
-
-pre_upgrade() {
-    # Удаляем старые Python файлы перед обновлением
-    rm -rf /usr/lib/adwyra
-}
-
-pre_install() {
-    # Удаляем старые файлы если есть
-    rm -rf /usr/lib/adwyra
-}
-
-post_install() {
-    # Обновляем кэш иконок
-    gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
-}
-
-post_upgrade() {
-    # Очищаем Python кэш и обновляем иконки
-    find /usr/lib/adwyra -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-    gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
+    install-license "${src}/LICENSE"
 }
 
 files() {
     files-find \
         "/usr/bin/adwyra" \
-        "/usr/lib/adwyra/**/*" \
-        "/usr/share/applications/com.github.adwyra.desktop" \
-        "/usr/share/icons/hicolor/*/apps/com.github.adwyra.png" \
-        "/usr/share/metainfo/com.github.adwyra.metainfo.xml" \
-        "/usr/share/licenses/LICENSE"
+        "/usr/lib/adwyra/adwyra/*.py" \
+        "/usr/lib/adwyra/adwyra/core/*.py" \
+        "/usr/lib/adwyra/adwyra/ui/*.py" \
+        "/usr/lib/adwyra/adwyra/ui/widgets/*.py" \
+        "/usr/lib/adwyra/adwyra/*.css" \
+        "/usr/share/icons/hicolor/16x16/apps/com.github.adwyra.png" \
+        "/usr/share/icons/hicolor/24x24/apps/com.github.adwyra.png" \
+        "/usr/share/icons/hicolor/32x32/apps/com.github.adwyra.png" \
+        "/usr/share/icons/hicolor/48x48/apps/com.github.adwyra.png" \
+        "/usr/share/icons/hicolor/64x64/apps/com.github.adwyra.png" \
+        "/usr/share/icons/hicolor/128x128/apps/com.github.adwyra.png" \
+        "/usr/share/icons/hicolor/256x256/apps/com.github.adwyra.png" \
+        "/usr/share/icons/hicolor/512x512/apps/com.github.adwyra.png" \
+        "/usr/share/metainfo/com.github.adwyra.metainfo.xml"
+    files-find-desktop
+    files-find-license
 }

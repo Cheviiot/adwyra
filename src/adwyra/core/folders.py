@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Управление папками приложений."""
+"""Управление папками приложений.
+
+Папки позволяют группировать приложения и хранятся
+в JSON-файле в пользовательской директории данных.
+"""
 
 import json
 import os
@@ -15,7 +19,7 @@ class Folders(GObject.Object):
     
     def __init__(self):
         super().__init__()
-        self._dir = os.path.join(GLib.get_user_data_dir(), "adwyra")
+        self._dir = os.path.join(GLib.get_user_config_dir(), "adwyra")
         self._path = os.path.join(self._dir, "folders.json")
         self._data = self._load()
     

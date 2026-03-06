@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Сервис поиска с debounce."""
+"""Сервис поиска приложений.
+
+Поддерживает debounce для оптимизации поиска
+при быстром вводе текста.
+"""
 
 from gi.repository import GLib, GObject, Gio
 
