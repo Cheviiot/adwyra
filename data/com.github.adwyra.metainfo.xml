@@ -69,6 +69,15 @@
   <content_rating type="oars-1.1" />
   
   <releases>
+    <release version="0.3.5" date="2026-03-07">
+      <description>
+        <p>Исправления:</p>
+        <ul>
+          <li>postremove не удаляет файлы при обновлении (только при полном удалении)</li>
+          <li>Решена проблема пропадания файлов после обновления</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.3.4" date="2026-03-07">
       <description>
         <p>Новое:</p>
