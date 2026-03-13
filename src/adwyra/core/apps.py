@@ -1,15 +1,31 @@
 # -*- coding: utf-8 -*-
-"""Cервис загрузки и кэширования установленных приложений.
+"""Сервис загрузки системных приложений.
 
-Отслеживает изменения в списке приложений через Gio.AppInfoMonitor
-и эмитит сигнал 'changed' при обновлении.
+Получает список всех установленных приложений через Gio.AppInfo и
+отслеживает изменения (установка/удаление программ) через Gio.AppInfoMonitor.
+
+Пример:
+    from adwyra.core.apps import app_service
+    
+    # Получить все приложения
+    apps = app_service.get_all()
+    
+    # Подписаться на изменения
+    app_service.connect("changed", lambda s: print("Приложения обновились"))
 """
 
 from gi.repository import Gio, GObject
 
 
 class AppService(GObject.Object):
-    """Кэширует и отслеживает изменения приложений."""
+    """Сервис доступа к системным приложениям.
+    
+    Кэширует список приложений и автоматически обновляет его
+    при установке или удалении программ в системе.
+    
+    Signals:
+        changed(): Список приложений изменился.
+    """
     
     __gsignals__ = {
         "changed": (GObject.SignalFlags.RUN_LAST, None, ()),
@@ -35,15 +51,6 @@ class AppService(GObject.Object):
     
     def get_all(self) -> list[Gio.AppInfo]:
         return self._apps
-    
-    def get_by_id(self, app_id: str) -> Gio.AppInfo | None:
-        return Gio.DesktopAppInfo.new(app_id)
-    
-    def launch(self, app_info: Gio.AppInfo) -> bool:
-        try:
-            return app_info.launch(None, None)
-        except Exception:
-            return False
 
 
 app_service = AppService()

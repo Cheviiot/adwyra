@@ -1,15 +1,25 @@
 # -*- coding: utf-8 -*-
 """Сервис поиска приложений.
 
-Поддерживает debounce для оптимизации поиска
-при быстром вводе текста.
+Реализует поиск по названию, описанию и ключевым словам приложений.
+Использует debounce (задержку 150мс) для оптимизации при быстром вводе.
+
+Пример:
+    search_svc = SearchService()
+    search_svc.set_apps(apps)  # Установить список для поиска
+    search_svc.connect("results", lambda s, apps: print(f"Найдено: {len(apps)}"))
+    search_svc.search("браузер")  # Запустить поиск с debounce
 """
 
 from gi.repository import GLib, GObject, Gio
 
 
 class SearchService(GObject.Object):
-    """Поиск приложений с debounce."""
+    """Сервис поиска приложений с асинхронным результатом.
+    
+    Signals:
+        results(apps: list[Gio.AppInfo]): Результаты поиска готовы.
+    """
     
     __gsignals__ = {
         "results": (GObject.SignalFlags.RUN_LAST, None, (object,)),
@@ -37,9 +47,6 @@ class SearchService(GObject.Object):
             self._do_search,
             query
         )
-    
-    def search_immediate(self, query: str) -> list[Gio.AppInfo]:
-        return self._filter(query)
     
     def _do_search(self, query: str) -> bool:
         self._timeout_id = None

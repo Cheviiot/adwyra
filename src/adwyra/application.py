@@ -1,5 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Основное приложение."""
+"""GTK4/Libadwaita приложение Adwyra.
+
+Основной класс Application управляет жизненным циклом приложения:
+- Загрузка CSS стилей
+- Применение темы (тёмная/светлая/системная)
+- Обработка командной строки (--toggle, --show, --hide)
+- Создание главного окна
+"""
 
 import os
 
@@ -15,7 +22,13 @@ from .core import config
 
 
 class Application(Adw.Application):
-    """Главное приложение Adwyra."""
+    """GTK4 приложение - лончер для GNOME.
+    
+    Поддерживает управление через D-Bus:
+        adwyra --toggle  # Показать/скрыть окно
+        adwyra --show    # Показать окно
+        adwyra --hide    # Скрыть окно
+    """
     
     def __init__(self):
         super().__init__(

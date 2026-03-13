@@ -11,7 +11,9 @@ gi.require_version("Gtk", "4.0")
 
 from gi.repository import Gtk, Gdk, Gio, GLib, GObject, Pango
 
-from ...core import config, favorites, aliases
+from ...core import config, favorites, aliases, hidden_apps
+from ..icon_utils import icon_needs_rounding
+from ..dialogs import RenameDialog
 
 
 class AppTile(Gtk.Button):
@@ -33,6 +35,7 @@ class AppTile(Gtk.Button):
         self.app_id = app_info.get_id() or ""
         self._hover_timeout = None
         self._drop_app_id = None
+        self._aliases_handler = None
         
         self.add_css_class("flat")
         
@@ -41,6 +44,7 @@ class AppTile(Gtk.Button):
         self._setup_menu()
         
         self.connect("clicked", self._launch)
+        self.connect("destroy", self._on_destroy)
     
     def _build(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -51,19 +55,25 @@ class AppTile(Gtk.Button):
         icon_overlay = Gtk.Overlay()
         
         # Контейнер для закругления иконки
-        icon_frame = Gtk.Frame()
-        icon_frame.set_halign(Gtk.Align.CENTER)
-        icon_frame.set_valign(Gtk.Align.CENTER)
-        icon_frame.add_css_class("icon-frame")
-        icon_frame.set_overflow(Gtk.Overflow.HIDDEN)
+        self._icon_frame = Gtk.Frame()
+        self._icon_frame.set_halign(Gtk.Align.CENTER)
+        self._icon_frame.set_valign(Gtk.Align.CENTER)
+        self._icon_frame.set_overflow(Gtk.Overflow.HIDDEN)
+        
+        # Проверяем, нужно ли скруглять иконку
+        gicon = self.app_info.get_icon() or Gio.ThemedIcon.new("application-x-executable")
+        icon_size = config.get("icon_size")
+        
+        if icon_needs_rounding(gicon, icon_size):
+            self._icon_frame.add_css_class("icon-frame")
+        else:
+            self._icon_frame.add_css_class("icon-frame-no-round")
         
         # Иконка
-        self._icon = Gtk.Image.new_from_gicon(
-            self.app_info.get_icon() or Gio.ThemedIcon.new("application-x-executable")
-        )
-        self._icon.set_pixel_size(config.get("icon_size"))
-        icon_frame.set_child(self._icon)
-        icon_overlay.set_child(icon_frame)
+        self._icon = Gtk.Image.new_from_gicon(gicon)
+        self._icon.set_pixel_size(icon_size)
+        self._icon_frame.set_child(self._icon)
+        icon_overlay.set_child(self._icon_frame)
         
         # Индикатор закрепления
         self._pin_badge = Gtk.Image.new_from_icon_name("starred-symbolic")
@@ -91,7 +101,12 @@ class AppTile(Gtk.Button):
         box.append(self._label)
         
         # Подписка на изменение псевдонима
-        aliases.connect("changed", self._on_alias_changed)
+        self._aliases_handler = aliases.connect("changed", self._on_alias_changed)
+    
+    def _on_destroy(self, widget):
+        if self._aliases_handler:
+            aliases.disconnect(self._aliases_handler)
+            self._aliases_handler = None
     
     def _setup_dnd(self):
         # Drag source
@@ -193,6 +208,7 @@ class AppTile(Gtk.Button):
         menu.append("Переименовать", "tile.rename")
         if has_alias:
             menu.append("Сбросить имя", "tile.reset_name")
+        menu.append("Скрыть", "tile.hide")
         
         group = Gio.SimpleActionGroup()
         
@@ -208,6 +224,10 @@ class AppTile(Gtk.Button):
         reset_action.connect("activate", lambda a, p: aliases.remove(self.app_id))
         group.add_action(reset_action)
         
+        hide_action = Gio.SimpleAction.new("hide", None)
+        hide_action.connect("activate", lambda a, p: hidden_apps.add(self.app_id))
+        group.add_action(hide_action)
+        
         self.insert_action_group("tile", group)
         
         popover = Gtk.PopoverMenu.new_from_model(menu)
@@ -219,65 +239,25 @@ class AppTile(Gtk.Button):
         window = self.get_root()
         
         # Блокируем закрытие по потере фокуса
-        if hasattr(window, "_has_dialog"):
-            window._has_dialog = True
+        if hasattr(window, "_dialogs"):
+            window._dialogs._has_dialog = True
         
-        dialog = Gtk.Window()
-        dialog.set_transient_for(window)
-        dialog.set_modal(True)
-        dialog.set_decorated(False)
-        dialog.set_resizable(False)
-        dialog.add_css_class("compact-dialog")
-        
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        box.set_margin_top(12)
-        box.set_margin_bottom(12)
-        box.set_margin_start(12)
-        box.set_margin_end(12)
-        
-        title = Gtk.Label(label="Переименовать")
-        title.add_css_class("heading")
-        box.append(title)
-        
-        # Поле ввода
-        entry = Gtk.Entry()
         current_alias = aliases.get(self.app_id)
-        entry.set_text(current_alias or self.app_info.get_display_name() or "")
-        entry.set_width_chars(18)
-        box.append(entry)
+        current_name = current_alias or self.app_info.get_display_name() or ""
         
-        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        btn_box.set_halign(Gtk.Align.END)
-        btn_box.set_margin_top(4)
+        dialog = RenameDialog(window, "Переименовать", current_name)
         
-        cancel_btn = Gtk.Button(label="Отмена")
-        cancel_btn.connect("clicked", lambda b: dialog.close())
-        btn_box.append(cancel_btn)
+        def on_renamed(d, new_name):
+            aliases.set(self.app_id, new_name)
         
-        ok_btn = Gtk.Button(label="Сохранить")
-        ok_btn.add_css_class("suggested-action")
-        
-        def on_ok(b):
-            new_name = entry.get_text().strip()
-            if new_name:
-                aliases.set(self.app_id, new_name)
-            dialog.close()
-        
-        ok_btn.connect("clicked", on_ok)
-        entry.connect("activate", on_ok)
-        btn_box.append(ok_btn)
-        
-        box.append(btn_box)
-        dialog.set_child(box)
-        
-        def on_close(w):
-            if hasattr(window, "_has_dialog"):
-                window._has_dialog = False
+        def on_close(d):
+            if hasattr(window, "_dialogs"):
+                window._dialogs._has_dialog = False
             return False
         
+        dialog.connect("renamed", on_renamed)
         dialog.connect("close-request", on_close)
         dialog.present()
-        entry.grab_focus()
     
     def _on_alias_changed(self, aliases_obj, app_id):
         """Обновляет отображаемое имя при изменении псевдонима."""
@@ -292,6 +272,3 @@ class AppTile(Gtk.Button):
         except GLib.Error:
             pass
         self.emit("launched")
-    
-    def update_icon_size(self):
-        self._icon.set_pixel_size(config.get("icon_size"))

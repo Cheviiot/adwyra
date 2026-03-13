@@ -9,25 +9,15 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gtk, Gdk, Gio, GLib
-import json
-import urllib.request
-import threading
+from gi.repository import Adw, Gtk, Gdk, GLib
 
-from .. import __version__, __app_name__
-from ..core import config, folders, SearchService
+from ..core import config, folders, SearchService, hidden_apps
 from ..core.apps import app_service
 from ..core.favorites import get_gnome_dock_apps
 from .widgets import AppGrid, SearchBar
-
-GITHUB_API_URL = "https://api.github.com/repos/Cheviiot/Adwyra/tags"
-
-# GSettings схемы
-GSETTINGS_MEDIA_KEYS = "org.gnome.settings-daemon.plugins.media-keys"
-GSETTINGS_CUSTOM_KEYBINDING = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding"
-GSETTINGS_WM = "org.gnome.desktop.wm.keybindings"
-GSETTINGS_SHELL = "org.gnome.shell.keybindings"
-ADWYRA_KEYBINDING_PATH = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/adwyra/"
+from .dialogs import DialogManager
+from .pages import PrefsPage, AboutPage, HiddenPage
+from .focus_utils import is_text_input_active
 
 
 class MainWindow(Adw.ApplicationWindow):
@@ -39,11 +29,12 @@ class MainWindow(Adw.ApplicationWindow):
     
     def __init__(self, app, **kwargs):
         super().__init__(application=app, **kwargs)
-        self._child_window = None
         self._is_dragging = False
-        self._has_dialog = False
+        self._dialogs = DialogManager(self)
         self._search_svc = SearchService()
         self._current_folder = None
+        self._current_query = ""
+        self._all_apps = []
         
         self._build()
         self._setup_events()
@@ -67,8 +58,8 @@ class MainWindow(Adw.ApplicationWindow):
         self._update_size()
         
         # Overlay для кнопки настроек
-        overlay = Gtk.Overlay()
-        self.set_content(overlay)
+        self._overlay = Gtk.Overlay()
+        self.set_content(self._overlay)
         
         # Stack для переключения видов
         self._stack = Gtk.Stack()
@@ -76,29 +67,47 @@ class MainWindow(Adw.ApplicationWindow):
         self._stack.set_vexpand(True)
         self._stack.set_hhomogeneous(True)
         self._stack.set_vhomogeneous(True)
-        overlay.set_child(self._stack)
+        self._overlay.set_child(self._stack)
         
         # === Главная страница ===
-        main_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._main_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._main_page.set_hexpand(True)
+        self._main_page.set_vexpand(True)
         
         # Поиск сверху (компактный, по центру)
         self._search_box = Gtk.Box()
         self._search_box.set_halign(Gtk.Align.CENTER)
-        self._search_box.set_margin_top(12)
-        self._search_box.set_margin_bottom(8)
-        main_page.append(self._search_box)
+        self._search_box.set_margin_top(8)
+        self._search_box.set_margin_bottom(4)
+        self._main_page.append(self._search_box)
         
         self._search = SearchBar()
         self._search.set_hexpand(False)
         self._search_box.append(self._search)
         
-        # Сетка приложений
-        self._grid = AppGrid()
-        self._grid.set_valign(Gtk.Align.START)
-        self._grid.set_vexpand(True)
-        main_page.append(self._grid)
+        # Сетка приложений в overlay (для сообщения "Ничего не найдено")
+        self._grid_overlay = Gtk.Overlay()
+        self._grid_overlay.set_hexpand(True)
+        self._grid_overlay.set_vexpand(True)
         
-        self._stack.add_named(main_page, "main")
+        self._grid = AppGrid()
+        self._grid.set_halign(Gtk.Align.FILL)
+        self._grid.set_valign(Gtk.Align.FILL)
+        self._grid.set_hexpand(True)
+        self._grid.set_vexpand(True)
+        self._grid_overlay.set_child(self._grid)
+        
+        # Label "Ничего не найдено" (поверх grid, изначально скрыт)
+        self._empty_label = Gtk.Label(label="Ничего не найдено")
+        self._empty_label.add_css_class("dim-label")
+        self._empty_label.set_halign(Gtk.Align.CENTER)
+        self._empty_label.set_valign(Gtk.Align.CENTER)
+        self._empty_label.set_visible(False)
+        self._grid_overlay.add_overlay(self._empty_label)
+        
+        self._main_page.append(self._grid_overlay)
+        
+        self._stack.add_named(self._main_page, "main")
         
         # Контейнер папки с inline заголовком
         folder_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -146,18 +155,30 @@ class MainWindow(Adw.ApplicationWindow):
         self._stack.add_named(folder_scroll, "folder")
         
         # === Страница настроек ===
-        self._prefs_page = self._build_prefs_page()
+        self._prefs_page = PrefsPage()
+        self._prefs_page.connect("back", lambda p: self._on_back(None))
+        self._prefs_page.connect("show-about", lambda p: self._show_about(None))
+        self._prefs_page.connect("show-hidden", lambda p: self._show_hidden_page(None))
         prefs_scroll = Gtk.ScrolledWindow()
         prefs_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         prefs_scroll.set_child(self._prefs_page)
         self._stack.add_named(prefs_scroll, "prefs")
         
         # === Страница О программе ===
-        self._about_page = self._build_about_page()
+        self._about_page = AboutPage()
+        self._about_page.connect("back", lambda p: self._stack.set_visible_child_name("prefs"))
         about_scroll = Gtk.ScrolledWindow()
         about_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         about_scroll.set_child(self._about_page)
         self._stack.add_named(about_scroll, "about")
+        
+        # === Страница скрытых приложений ===
+        self._hidden_page = HiddenPage()
+        self._hidden_page.connect("back", lambda p: self._stack.set_visible_child_name("prefs"))
+        hidden_scroll = Gtk.ScrolledWindow()
+        hidden_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        hidden_scroll.set_child(self._hidden_page)
+        self._stack.add_named(hidden_scroll, "hidden")
         
         # Кнопка настроек слева сверху (только на главной)
         self._prefs_btn = Gtk.Button.new_from_icon_name("emblem-system-symbolic")
@@ -168,9 +189,10 @@ class MainWindow(Adw.ApplicationWindow):
         self._prefs_btn.set_halign(Gtk.Align.START)
         self._prefs_btn.set_valign(Gtk.Align.START)
         self._prefs_btn.set_margin_start(12)
-        self._prefs_btn.set_margin_top(12)
+        self._prefs_btn.set_margin_top(8)
+        self._prefs_btn.set_focusable(True)  # Чтобы фокус уходил с поиска при клике
         self._prefs_btn.connect("clicked", self._open_prefs)
-        overlay.add_overlay(self._prefs_btn)
+        self._overlay.add_overlay(self._prefs_btn)
         
         # Кнопка закрытия справа сверху
         self._close_btn = Gtk.Button.new_from_icon_name("window-close-symbolic")
@@ -181,20 +203,24 @@ class MainWindow(Adw.ApplicationWindow):
         self._close_btn.set_halign(Gtk.Align.END)
         self._close_btn.set_valign(Gtk.Align.START)
         self._close_btn.set_margin_end(12)
-        self._close_btn.set_margin_top(12)
+        self._close_btn.set_margin_top(8)
+        self._close_btn.set_focusable(True)  # Чтобы фокус уходил с поиска при клике
         self._close_btn.connect("clicked", lambda b: self.close())
-        overlay.add_overlay(self._close_btn)
+        self._overlay.add_overlay(self._close_btn)
     
     def _update_size(self):
-        cols = config.get("columns")
-        rows = config.get("rows")
-        icon = config.get("icon_size")
-        width = cols * (icon + 32) + 48
-        height = rows * (icon + 48) + 80  # Учёт поиска и точек
+        width, height = config.window_size
+        self.set_size_request(width, height)
         self.set_default_size(width, height)
         self.set_resizable(False)
     
     def _setup_events(self):
+        # Перехват стрелок — блокируем везде кроме текстовых полей
+        arrow_ctrl = Gtk.EventControllerKey()
+        arrow_ctrl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        arrow_ctrl.connect("key-pressed", self._on_arrow_capture)
+        self.add_controller(arrow_ctrl)
+        
         # Клавиши
         key = Gtk.EventControllerKey()
         key.connect("key-pressed", self._on_key)
@@ -202,10 +228,69 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Потеря фокуса окна
         self.connect("notify::is-active", self._on_active_changed)
+        
+        # Отслеживаем изменение фокуса для сброса focusable у поиска
+        self.connect("notify::focus-widget", self._on_focus_widget_changed)
+        
+        # Клик на главной странице в фазе CAPTURE — сбросить фокус с поиска
+        main_click = Gtk.GestureClick()
+        main_click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        main_click.connect("pressed", self._on_main_page_click)
+        self._main_page.add_controller(main_click)
     
     def _on_active_changed(self, window, pspec):
         if not self.is_active() and config.get("close_on_focus_lost"):
             GLib.timeout_add(100, self._check_close)
+    
+    def _on_arrow_capture(self, ctrl, keyval, keycode, state):
+        """Блокировать стрелки везде кроме текстовых полей."""
+        arrow_keys = (Gdk.KEY_Up, Gdk.KEY_Down, Gdk.KEY_Left, Gdk.KEY_Right)
+        if keyval not in arrow_keys:
+            return False  # Не стрелка — пропускаем
+        
+        # Разрешаем стрелки только в текстовых полях
+        if is_text_input_active(self):
+            return False
+        
+        # Блокируем стрелки
+        return True
+    
+    def _on_main_page_click(self, gesture, n_press, x, y):
+        """Клик на главной странице — сбросить фокус с поиска если кликнули вне него."""
+        if not self._search.has_focus():
+            return
+        
+        # Находим виджет под курсором
+        widget = self._main_page.pick(x, y, Gtk.PickFlags.DEFAULT)
+        
+        # Проверяем, является ли виджет частью поиска
+        current = widget
+        while current:
+            if current == self._search:
+                return  # Кликнули в поле поиска — не трогаем
+            current = current.get_parent()
+        
+        # Клик вне поиска — сбросить фокус
+        self._search.release_focus()
+
+    def _on_focus_widget_changed(self, window, pspec):
+        """При смене фокуса — сбросить focusable у поиска если фокус ушёл."""
+        focused = self.get_focus()
+        
+        # Проверяем, является ли новый фокус частью поиска
+        if focused is not None:
+            current = focused
+            while current:
+                if current == self._search:
+                    return  # Фокус внутри поиска
+                current = current.get_parent()
+        
+        # Фокус ушёл из поиска (или None) — сбрасываем
+        if self._search.has_focus():
+            # Это не должно случиться, но на всякий случай
+            pass
+        else:
+            self._search.set_focusable(False)
     
     def _connect_signals(self):
         self._search.connect("query-changed", self._on_search)
@@ -220,6 +305,7 @@ class MainWindow(Adw.ApplicationWindow):
         
         app_service.connect("changed", lambda s: self._load_apps())
         folders.connect("changed", lambda f: self._load_apps())
+        hidden_apps.connect("changed", lambda h: self._load_apps())
         config.connect("changed", self._on_config_changed)
     
     def _on_drag_begin(self, grid):
@@ -236,41 +322,82 @@ class MainWindow(Adw.ApplicationWindow):
         if config.get("hide_dock_apps"):
             exclude.update(get_gnome_dock_apps())
         
+        # Скрывать вручную скрытые приложения
+        exclude.update(hidden_apps.get_all())
+        
         self._search_svc.set_apps(apps)
         self._search_svc.set_exclude(exclude)
         
         filtered = [a for a in apps if a.get_id() not in exclude]
+        self._all_apps = filtered
         self._grid.set_apps(filtered)
+        self._empty_label.set_visible(False)
     
     def _on_search(self, search_bar, query):
-        self._search_svc.search(query)
+        self._current_query = query.strip()
+        if not self._current_query:
+            # Пустой запрос — показать все приложения
+            self._empty_label.set_visible(False)
+            self._grid.set_opacity(1)
+            self._grid.set_can_target(True)
+            self._grid.set_apps(self._all_apps)
+        else:
+            self._search_svc.search(query)
     
     def _on_results(self, svc, apps):
-        self._grid.set_apps(apps)
+        if not apps and self._current_query:
+            # Пустой результат при активном поиске — скрыть grid через opacity (сохраняет размер)
+            self._empty_label.set_visible(True)
+            self._grid.set_opacity(0)
+            self._grid.set_can_target(False)
+        else:
+            self._empty_label.set_visible(False)
+            self._grid.set_opacity(1)
+            self._grid.set_can_target(True)
+            self._grid.set_apps(apps)
     
     def _on_key(self, ctrl, keyval, keycode, state):
         # Игнорируем клавиши когда открыт диалог
         if self._has_dialog:
             return False
         
+        # Escape работает глобально
         if keyval == Gdk.KEY_Escape:
+            # При активном поиске — сначала очищаем текст
+            if self._search.get_text():
+                self._search.clear()
+                self.set_focus(None)  # Убираем фокус с поиска
+                return True
             if self._current_folder:
                 self._on_back(None)
                 return True
-            if self._search.get_text():
-                self._search.clear()
-                return True
             self.close()
             return True
+        
+        # Пропускаем остальные клавиши к editable виджетам
+        if is_text_input_active(self):
+            # Enter в поиске — активировать первый элемент
+            if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+                if self._search.get_text() and self._grid.has_items:
+                    self._grid.activate_first()
+                    return True
+            return False
+        
+        # Ctrl+F — фокус на поиске
         if state & Gdk.ModifierType.CONTROL_MASK and keyval == Gdk.KEY_f:
             self._search.set_focusable(True)
             self._search.grab_focus()
             return True
+        
         return False
+    
+    @property
+    def _has_dialog(self) -> bool:
+        return self._dialogs.has_dialog
     
     def _check_close(self):
         # Не закрывать если активны, есть дочернее окно, перетаскивание или диалог
-        if self.is_active() or self._child_window or self._is_dragging or self._has_dialog:
+        if self.is_active() or self._is_dragging or self._has_dialog:
             return False
         self.close()
         return False
@@ -290,7 +417,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._stack.set_visible_child_name("folder")
     
     def _populate_folder(self, folder_id):
-        from .folder_popup import FolderAppTile
+        from .widgets import FolderAppTile
         
         # Очистить Grid
         while True:
@@ -308,13 +435,13 @@ class MainWindow(Adw.ApplicationWindow):
         
         cols = config.get("columns")
         rows = config.get("rows")
-        icon_size = config.get("icon_size")
+        cell_width, cell_height = config.cell_size
         
         # Заполняем все ячейки placeholder'ами
         for r in range(rows):
             for c in range(cols):
                 placeholder = Gtk.Box()
-                placeholder.set_size_request(icon_size + 20, icon_size + 40)
+                placeholder.set_size_request(cell_width, cell_height)
                 self._folder_grid.attach(placeholder, c, r, 1, 1)
         
         # Добавляем реальные элементы
@@ -347,6 +474,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._prefs_btn.set_visible(True)
         self._close_btn.set_visible(True)
         self._stack.set_visible_child_name("main")
+        GLib.idle_add(self._clear_focus)  # Сбросить фокус после переключения
         self._load_apps()
     
     def _on_folder_delete_btn(self, btn):
@@ -363,459 +491,28 @@ class MainWindow(Adw.ApplicationWindow):
         data = folders.get(folder_id)
         if not data:
             return
-        
-        self._has_dialog = True
-        
-        dialog = Gtk.Window()
-        dialog.set_transient_for(self)
-        dialog.set_modal(True)
-        dialog.set_decorated(False)
-        dialog.set_resizable(False)
-        dialog.add_css_class("compact-dialog")
-        
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        box.set_margin_top(12)
-        box.set_margin_bottom(12)
-        box.set_margin_start(12)
-        box.set_margin_end(12)
-        
-        title = Gtk.Label(label="Переименовать")
-        title.add_css_class("heading")
-        box.append(title)
-        
-        entry = Gtk.Entry()
-        entry.set_text(data.get("name", ""))
-        entry.set_width_chars(18)
-        box.append(entry)
-        
-        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        btn_box.set_halign(Gtk.Align.END)
-        btn_box.set_margin_top(4)
-        
-        cancel_btn = Gtk.Button(label="Отмена")
-        cancel_btn.connect("clicked", lambda b: dialog.close())
-        btn_box.append(cancel_btn)
-        
-        ok_btn = Gtk.Button(label="OK")
-        ok_btn.add_css_class("suggested-action")
-        
-        def on_ok(b):
-            if entry.get_text().strip():
-                folders.rename(folder_id, entry.get_text().strip())
-            dialog.close()
-        
-        ok_btn.connect("clicked", on_ok)
-        entry.connect("activate", on_ok)
-        btn_box.append(ok_btn)
-        
-        box.append(btn_box)
-        dialog.set_child(box)
-        
-        def on_close(w):
-            self._has_dialog = False
-            return False
-        
-        dialog.connect("close-request", on_close)
-        dialog.present()
-        entry.grab_focus()
+        self._dialogs.show_rename(
+            "Переименовать",
+            data.get("name", ""),
+            lambda name: folders.rename(folder_id, name)
+        )
     
     def _show_delete_dialog(self, folder_id):
-        self._has_dialog = True
-        
-        dialog = Gtk.Window()
-        dialog.set_transient_for(self)
-        dialog.set_modal(True)
-        dialog.set_decorated(False)
-        dialog.set_resizable(False)
-        dialog.add_css_class("compact-dialog")
-        
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        box.set_margin_top(12)
-        box.set_margin_bottom(12)
-        box.set_margin_start(12)
-        box.set_margin_end(12)
-        
-        title = Gtk.Label(label="Удалить папку?")
-        title.add_css_class("heading")
-        box.append(title)
-        
-        desc = Gtk.Label(label="Приложения вернутся в сетку")
-        desc.add_css_class("dim-label")
-        box.append(desc)
-        
-        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        btn_box.set_halign(Gtk.Align.END)
-        btn_box.set_margin_top(8)
-        
-        cancel_btn = Gtk.Button(label="Отмена")
-        cancel_btn.connect("clicked", lambda b: dialog.close())
-        btn_box.append(cancel_btn)
-        
-        del_btn = Gtk.Button(label="Удалить")
-        del_btn.add_css_class("destructive-action")
-        
-        def on_delete(b):
+        def on_confirmed():
             folders.delete(folder_id)
-            dialog.close()
             if self._current_folder == folder_id:
                 self._on_back(None)
         
-        del_btn.connect("clicked", on_delete)
-        btn_box.append(del_btn)
-        
-        box.append(btn_box)
-        dialog.set_child(box)
-        
-        def on_close(w):
-            self._has_dialog = False
-            return False
-        
-        dialog.connect("close-request", on_close)
-        dialog.present()
-    
-    def _on_child_close(self, window):
-        self._child_window = None
-        return False
+        self._dialogs.show_delete(
+            "Удалить папку?",
+            "Приложения вернутся в сетку",
+            on_confirmed
+        )
     
     def _open_prefs(self, btn):
         self._prefs_btn.set_visible(False)
         self._close_btn.set_visible(False)
         self._stack.set_visible_child_name("prefs")
-    
-    def _build_prefs_page(self):
-        from gi.repository import Adw
-        
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        box.set_margin_start(16)
-        box.set_margin_end(16)
-        box.set_margin_top(12)
-        box.set_margin_bottom(12)
-        
-        # Заголовок с кнопкой назад
-        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        header_box.set_margin_bottom(8)
-        
-        back_btn = Gtk.Button.new_from_icon_name("go-previous-symbolic")
-        back_btn.add_css_class("flat")
-        back_btn.add_css_class("dimmed")
-        back_btn.connect("clicked", self._on_back)
-        header_box.append(back_btn)
-        
-        title = Gtk.Label(label="Настройки")
-        title.add_css_class("title-2")
-        title.set_hexpand(True)
-        title.set_halign(Gtk.Align.CENTER)
-        header_box.append(title)
-        
-        # Кнопка About
-        about_btn = Gtk.Button.new_from_icon_name("help-about-symbolic")
-        about_btn.add_css_class("flat")
-        about_btn.add_css_class("dimmed")
-        about_btn.set_tooltip_text("О программе")
-        about_btn.connect("clicked", self._show_about)
-        header_box.append(about_btn)
-        
-        box.append(header_box)
-        
-        # Внешний вид
-        appearance = Adw.PreferencesGroup()
-        appearance.set_title("Внешний вид")
-        box.append(appearance)
-        
-        # Тема
-        theme_row = Adw.ComboRow()
-        theme_row.set_title("Тема")
-        theme_row.set_model(Gtk.StringList.new(["Системная", "Светлая", "Тёмная"]))
-        theme_map = {"system": 0, "light": 1, "dark": 2}
-        theme_row.set_selected(theme_map.get(config.get("theme"), 0))
-        theme_row.connect("notify::selected", self._on_theme_change)
-        appearance.add(theme_row)
-        
-        # Размер иконок
-        icon_row = Adw.ComboRow()
-        icon_row.set_title("Размер иконок")
-        icon_row.set_model(Gtk.StringList.new(["Маленький (56)", "Средний (72)", "Большой (96)"]))
-        icon_map = {56: 0, 72: 1, 96: 2}
-        icon_row.set_selected(icon_map.get(config.get("icon_size"), 1))
-        icon_row.connect("notify::selected", self._on_icon_size_change)
-        appearance.add(icon_row)
-        
-        # Сетка
-        grid_group = Adw.PreferencesGroup()
-        grid_group.set_title("Сетка")
-        box.append(grid_group)
-        
-        cols_row = Adw.SpinRow.new_with_range(4, 10, 1)
-        cols_row.set_title("Колонки")
-        cols_row.set_value(config.get("columns"))
-        cols_row.connect("notify::value", lambda r, p: config.set("columns", int(r.get_value())))
-        grid_group.add(cols_row)
-        
-        rows_row = Adw.SpinRow.new_with_range(3, 8, 1)
-        rows_row.set_title("Строки")
-        rows_row.set_value(config.get("rows"))
-        rows_row.connect("notify::value", lambda r, p: config.set("rows", int(r.get_value())))
-        grid_group.add(rows_row)
-        
-        # Поведение
-        behavior = Adw.PreferencesGroup()
-        behavior.set_title("Поведение")
-        box.append(behavior)
-        
-        close_launch = Adw.SwitchRow()
-        close_launch.set_title("Закрывать при запуске")
-        close_launch.set_active(config.get("close_on_launch"))
-        close_launch.connect("notify::active", lambda r, p: config.set("close_on_launch", r.get_active()))
-        behavior.add(close_launch)
-        
-        close_focus = Adw.SwitchRow()
-        close_focus.set_title("Закрывать при потере фокуса")
-        close_focus.set_active(config.get("close_on_focus_lost"))
-        close_focus.connect("notify::active", lambda r, p: config.set("close_on_focus_lost", r.get_active()))
-        behavior.add(close_focus)
-        
-        hide_dock = Adw.SwitchRow()
-        hide_dock.set_title("Скрывать закреплённые в Dock")
-        hide_dock.set_active(config.get("hide_dock_apps"))
-        hide_dock.connect("notify::active", lambda r, p: config.set("hide_dock_apps", r.get_active()))
-        behavior.add(hide_dock)
-        
-        # Горячая клавиша
-        hotkey_group = Adw.PreferencesGroup()
-        hotkey_group.set_title("Горячая клавиша")
-        hotkey_group.set_description("Введите сочетание, например: Super+A, Ctrl+Space")
-        box.append(hotkey_group)
-        
-        # Получить текущую горячую клавишу
-        current_hotkey = self._get_current_hotkey()
-        
-        self._hotkey_entry = Adw.EntryRow()
-        self._hotkey_entry.set_title("Сочетание клавиш")
-        self._hotkey_entry.set_text(current_hotkey or "")
-        self._hotkey_entry.connect("apply", self._on_hotkey_apply)
-        self._hotkey_entry.set_show_apply_button(True)
-        
-        clear_btn = Gtk.Button.new_from_icon_name("edit-clear-symbolic")
-        clear_btn.set_valign(Gtk.Align.CENTER)
-        clear_btn.add_css_class("flat")
-        clear_btn.add_css_class("dimmed")
-        clear_btn.set_tooltip_text("Удалить")
-        clear_btn.connect("clicked", self._on_clear_hotkey)
-        self._hotkey_entry.add_suffix(clear_btn)
-        
-        hotkey_group.add(self._hotkey_entry)
-        
-        return box
-    
-    def _on_theme_change(self, row, param):
-        from gi.repository import Adw
-        themes = ["system", "light", "dark"]
-        theme = themes[row.get_selected()]
-        config.set("theme", theme)
-        style = Adw.StyleManager.get_default()
-        if theme == "dark":
-            style.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
-        elif theme == "light":
-            style.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
-        else:
-            style.set_color_scheme(Adw.ColorScheme.DEFAULT)
-    
-    def _on_icon_size_change(self, row, param):
-        sizes = [56, 72, 96]
-        config.set("icon_size", sizes[row.get_selected()])
-    
-    def _get_current_hotkey(self):
-        """Получить текущую горячую клавишу из GNOME settings."""
-        try:
-            settings = Gio.Settings.new(GSETTINGS_MEDIA_KEYS)
-            customs = settings.get_strv("custom-keybindings")
-            for path in customs:
-                if "adwyra" in path:
-                    custom = Gio.Settings.new_with_path(
-                        GSETTINGS_CUSTOM_KEYBINDING,
-                        path
-                    )
-                    binding = custom.get_string("binding")
-                    if binding:
-                        # Преобразуем в читаемый вид (GTK4)
-                        success, keyval, mods = Gtk.accelerator_parse(binding)
-                        if success and keyval:
-                            return Gtk.accelerator_get_label(keyval, mods)
-                        return binding
-        except Exception:
-            pass
-        return None
-    
-    def _reset_dialog_flag(self):
-        self._has_dialog = False
-        return False
-    
-    def _normalize_hotkey(self, text):
-        """Преобразовать текст в GTK accelerator формат."""
-        if not text:
-            return None
-        text = text.strip()
-        # Уже в формате GTK <Mod>key
-        if text.startswith("<"):
-            return text
-        # Формат Super+A -> <Super>a
-        parts = text.split("+")
-        if len(parts) < 2:
-            return None
-        mods = []
-        key = parts[-1].lower()
-        for p in parts[:-1]:
-            p = p.strip().lower()
-            if p in ("super", "mod4"):
-                mods.append("<Super>")
-            elif p in ("ctrl", "control"):
-                mods.append("<Control>")
-            elif p in ("alt", "mod1"):
-                mods.append("<Alt>")
-            elif p == "shift":
-                mods.append("<Shift>")
-        if not mods:
-            return None
-        return "".join(mods) + key
-    
-    def _on_hotkey_apply(self, entry):
-        """Применить введённую горячую клавишу."""
-        text = entry.get_text()
-        accel = self._normalize_hotkey(text)
-        
-        if not accel:
-            # Показать ошибку
-            entry.add_css_class("error")
-            GLib.timeout_add(2000, lambda: entry.remove_css_class("error") or False)
-            return
-        
-        # Проверка валидности (GTK4 возвращает 3 значения)
-        success, keyval, mods = Gtk.accelerator_parse(accel)
-        if not success or keyval == 0:
-            entry.add_css_class("error")
-            GLib.timeout_add(2000, lambda: entry.remove_css_class("error") or False)
-            return
-        
-        # Проверить конфликт
-        conflict = self._check_hotkey_conflict(accel)
-        if conflict:
-            entry.add_css_class("error")
-            entry.set_text(f"Занято: {conflict}")
-            GLib.timeout_add(2500, lambda: (entry.remove_css_class("error"), entry.set_text(text)) or False)
-            return
-        
-        # Сохраняем
-        self._save_hotkey(accel)
-        label = Gtk.accelerator_get_label(keyval, mods)
-        entry.set_text(label or text)
-        entry.add_css_class("success")
-        GLib.timeout_add(1500, lambda: entry.remove_css_class("success") or False)
-    
-    def _check_hotkey_conflict(self, accel):
-        """Проверить, занято ли сочетание клавиш системой."""
-        try:
-            # Проверяем media-keys
-            settings = Gio.Settings.new(GSETTINGS_MEDIA_KEYS)
-            
-            # Проверяем стандартные шорткаты
-            for key in settings.list_keys():
-                try:
-                    val = settings.get_value(key)
-                    if val.get_type_string() == 's':
-                        if val.get_string() == accel:
-                            return key.replace("-", " ").title()
-                    elif val.get_type_string() == 'as':
-                        if accel in val.get_strv():
-                            return key.replace("-", " ").title()
-                except Exception:
-                    pass
-            
-            # Проверяем custom keybindings (кроме нашего)
-            customs = settings.get_strv("custom-keybindings")
-            for path in customs:
-                if "adwyra" in path:
-                    continue
-                try:
-                    custom = Gio.Settings.new_with_path(
-                        GSETTINGS_CUSTOM_KEYBINDING,
-                        path
-                    )
-                    if custom.get_string("binding") == accel:
-                        return custom.get_string("name") or "Другой шорткат"
-                except Exception:
-                    pass
-            
-            # Проверяем WM keybindings
-            try:
-                wm = Gio.Settings.new(GSETTINGS_WM)
-                for key in wm.list_keys():
-                    bindings = wm.get_strv(key)
-                    if accel in bindings:
-                        return key.replace("-", " ").title()
-            except Exception:
-                pass
-            
-            # Проверяем shell keybindings
-            try:
-                shell = Gio.Settings.new(GSETTINGS_SHELL)
-                for key in shell.list_keys():
-                    bindings = shell.get_strv(key)
-                    if accel in bindings:
-                        return key.replace("-", " ").title()
-            except Exception:
-                pass
-                
-        except Exception:
-            pass
-        return None
-    
-    def _save_hotkey(self, accel):
-        """Сохранить горячую клавишу в GNOME settings."""
-        try:
-            settings = Gio.Settings.new(GSETTINGS_MEDIA_KEYS)
-            customs = list(settings.get_strv("custom-keybindings"))
-            
-            # Добавляем путь если его нет
-            if ADWYRA_KEYBINDING_PATH not in customs:
-                customs.append(ADWYRA_KEYBINDING_PATH)
-                settings.set_strv("custom-keybindings", customs)
-            
-            # Настраиваем шорткат
-            custom = Gio.Settings.new_with_path(
-                GSETTINGS_CUSTOM_KEYBINDING,
-                ADWYRA_KEYBINDING_PATH
-            )
-            custom.set_string("name", "Adwyra")
-            custom.set_string("command", "adwyra --toggle")
-            custom.set_string("binding", accel)
-            
-            Gio.Settings.sync()
-        except Exception as e:
-            print(f"Ошибка сохранения горячей клавиши: {e}")
-    
-    def _on_clear_hotkey(self, btn):
-        """Удалить горячую клавишу."""
-        try:
-            settings = Gio.Settings.new(GSETTINGS_MEDIA_KEYS)
-            customs = list(settings.get_strv("custom-keybindings"))
-            
-            if ADWYRA_KEYBINDING_PATH in customs:
-                customs.remove(ADWYRA_KEYBINDING_PATH)
-                settings.set_strv("custom-keybindings", customs)
-            
-            # Очищаем binding
-            custom = Gio.Settings.new_with_path(
-                GSETTINGS_CUSTOM_KEYBINDING,
-                ADWYRA_KEYBINDING_PATH
-            )
-            custom.reset("name")
-            custom.reset("command")
-            custom.reset("binding")
-            
-            Gio.Settings.sync()
-            self._hotkey_entry.set_text("")
-        except Exception as e:
-            print(f"Ошибка удаления горячей клавиши: {e}")
     
     def _on_config_changed(self, cfg, key, val):
         if key in ("columns", "rows", "icon_size", "hide_dock_apps"):
@@ -826,142 +523,11 @@ class MainWindow(Adw.ApplicationWindow):
         """Показать страницу О программе."""
         self._stack.set_visible_child_name("about")
         # Автоматически проверяем обновления при открытии
-        self._check_updates()
+        self._about_page.check_updates()
     
-    def _build_about_page(self):
-        """Создать страницу О программе."""
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        box.set_margin_start(16)
-        box.set_margin_end(16)
-        box.set_margin_top(12)
-        box.set_margin_bottom(12)
-        
-        # Заголовок с кнопкой назад
-        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        header_box.set_margin_bottom(4)
-        
-        back_btn = Gtk.Button.new_from_icon_name("go-previous-symbolic")
-        back_btn.add_css_class("flat")
-        back_btn.add_css_class("dimmed")
-        back_btn.connect("clicked", lambda b: self._stack.set_visible_child_name("prefs"))
-        header_box.append(back_btn)
-        
-        title = Gtk.Label(label="О программе")
-        title.add_css_class("title-2")
-        title.set_hexpand(True)
-        title.set_halign(Gtk.Align.CENTER)
-        header_box.append(title)
-        
-        # Spacer для центрирования
-        spacer = Gtk.Box()
-        spacer.set_size_request(34, -1)
-        header_box.append(spacer)
-        
-        box.append(header_box)
-        
-        # Иконка и название
-        icon = Gtk.Image.new_from_icon_name("com.github.adwyra")
-        icon.set_pixel_size(96)
-        icon.set_halign(Gtk.Align.CENTER)
-        icon.set_margin_top(8)
-        box.append(icon)
-        
-        name_label = Gtk.Label(label=__app_name__)
-        name_label.add_css_class("title-2")
-        name_label.set_halign(Gtk.Align.CENTER)
-        name_label.set_margin_top(4)
-        box.append(name_label)
-        
-        version_label = Gtk.Label(label=f"Версия {__version__}")
-        version_label.add_css_class("dim-label")
-        version_label.set_halign(Gtk.Align.CENTER)
-        box.append(version_label)
-        
-        # Статус обновлений
-        self._update_status = Gtk.Label(label="")
-        self._update_status.set_halign(Gtk.Align.CENTER)
-        self._update_status.set_margin_top(4)
-        box.append(self._update_status)
-        
-        desc_label = Gtk.Label(label="Минималистичный лаунчер приложений для GNOME")
-        desc_label.set_halign(Gtk.Align.CENTER)
-        desc_label.set_margin_top(8)
-        desc_label.set_wrap(True)
-        box.append(desc_label)
-        
-        # Ссылка
-        link_btn = Gtk.LinkButton.new_with_label(
-            "https://github.com/cheviiot/adwyra",
-            "GitHub"
-        )
-        link_btn.set_halign(Gtk.Align.CENTER)
-        link_btn.set_margin_top(8)
-        box.append(link_btn)
-        
-        # Лицензия
-        license_label = Gtk.Label(label="Лицензия: GPL-3.0")
-        license_label.add_css_class("dim-label")
-        license_label.set_halign(Gtk.Align.CENTER)
-        license_label.set_margin_top(8)
-        box.append(license_label)
-        
-        return box
+    def _show_hidden_page(self, row):
+        """Показать страницу скрытых приложений."""
+        self._hidden_page.populate()
+        self._stack.set_visible_child_name("hidden")
     
-    def _check_updates(self):
-        """Проверить наличие обновлений через GitHub API."""
-        self._update_status.set_label("Проверка обновлений...")
-        self._update_status.remove_css_class("success")
-        self._update_status.remove_css_class("warning")
-        self._update_status.add_css_class("dim-label")
-        
-        def fetch():
-            try:
-                req = urllib.request.Request(
-                    GITHUB_API_URL,
-                    headers={"User-Agent": "Adwyra"}
-                )
-                with urllib.request.urlopen(req, timeout=5) as resp:
-                    data = json.loads(resp.read().decode())
-                    if data and len(data) > 0:
-                        latest = data[0]["name"]
-                        if latest.startswith("v"):
-                            latest = latest[1:]
-                        GLib.idle_add(self._on_update_result, latest, None)
-                    else:
-                        GLib.idle_add(self._on_update_result, None, "Нет тегов")
-            except Exception as e:
-                GLib.idle_add(self._on_update_result, None, str(e))
-        
-        thread = threading.Thread(target=fetch, daemon=True)
-        thread.start()
-    
-    def _on_update_result(self, latest_version, error):
-        """Обработка результата проверки обновлений."""
-        self._update_status.remove_css_class("dim-label")
-        
-        if error:
-            self._update_status.set_label(f"⚠ Ошибка: {error[:30]}")
-            self._update_status.add_css_class("warning")
-            return
-        
-        current = __version__
-        if self._compare_versions(latest_version, current) > 0:
-            self._update_status.set_label(f"🔄 Доступно: v{latest_version}")
-            self._update_status.add_css_class("warning")
-        else:
-            self._update_status.set_label("✓ Актуальная версия")
-            self._update_status.add_css_class("success")
-    
-    def _compare_versions(self, v1, v2):
-        """Сравнить версии. Возвращает >0 если v1 > v2."""
-        def parse(v):
-            return [int(x) for x in v.split(".")]
-        try:
-            parts1 = parse(v1)
-            parts2 = parse(v2)
-            for a, b in zip(parts1, parts2):
-                if a != b:
-                    return a - b
-            return len(parts1) - len(parts2)
-        except:
-            return 0
+

@@ -103,17 +103,12 @@ class FolderTile(Gtk.Button):
         # Получить app_id из drag
         drop = target.get_drop()
         if drop:
-            # Не принимать закреплённые приложения
-            self._pending_app = None
-            
             def on_read(drop, result):
                 try:
                     value = drop.read_value_finish(result)
                     if isinstance(value, str) and favorites.contains(value):
-                        self._pending_app = None
                         self.remove_css_class("drop-hover")
                     else:
-                        self._pending_app = value
                         self.add_css_class("drop-hover")
                 except Exception:
                     pass

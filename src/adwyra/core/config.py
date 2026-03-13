@@ -1,8 +1,21 @@
 # -*- coding: utf-8 -*-
-"""Cистема конфигурации приложения.
+"""Система конфигурации приложения.
 
-Хранит настройки в JSON-файле и эмитит сигналы
-при изменении значений для реактивного обновления UI.
+Хранит пользовательские настройки в JSON-файле (~/.config/adwyra/config.json).
+При изменении любого параметра автоматически сохраняет файл и оповещает
+подписчиков через GObject-сигнал "changed".
+
+Пример использования:
+    from adwyra.core import config
+    
+    # Чтение настройки
+    columns = config.get("columns")
+    
+    # Изменение настройки (автосохранение + сигнал)
+    config.set("columns", 8)
+    
+    # Подписка на изменения
+    config.connect("changed", lambda cfg, key, val: print(f"{key} = {val}"))
 """
 
 import json
@@ -11,55 +24,111 @@ from gi.repository import GLib, GObject
 
 
 class Config(GObject.Object):
-    """Настройки приложения с сохранением."""
+    """Менеджер настроек приложения.
+    
+    Attributes:
+        DEFAULTS: Значения по умолчанию для всех настроек.
+    
+    Signals:
+        changed(key: str, value: Any): Настройка изменилась.
+    """
     
     __gsignals__ = {
         "changed": (GObject.SignalFlags.RUN_LAST, None, (str, object)),
     }
     
     DEFAULTS = {
-        "columns": 7,
-        "rows": 5,
-        "icon_size": 56,
-        "theme": "system",  # system, light, dark
-        "close_on_launch": True,
-        "close_on_focus_lost": True,
-        "hide_dock_apps": True,  # Скрывать закреплённые в Dock
+        "columns": 7,           # Столбцов в сетке
+        "rows": 5,              # Строк в сетке
+        "icon_size": 56,        # Размер иконок (px)
+        "theme": "system",      # Тема: system, light, dark
+        "close_on_launch": True,          # Закрывать при запуске приложения
+        "close_on_focus_lost": True,      # Закрывать при потере фокуса
+        "hide_dock_apps": True,           # Скрывать закреплённые в Dock
     }
     
     def __init__(self):
         super().__init__()
-        self._dir = os.path.join(GLib.get_user_config_dir(), "adwyra")
-        self._path = os.path.join(self._dir, "config.json")
+        self._config_dir = os.path.join(GLib.get_user_config_dir(), "adwyra")
+        self._config_path = os.path.join(self._config_dir, "config.json")
         self._data = self._load()
     
     def _load(self) -> dict:
-        if os.path.exists(self._path):
+        """Загрузить настройки из файла или вернуть значения по умолчанию."""
+        if os.path.exists(self._config_path):
             try:
-                with open(self._path, "r") as f:
-                    data = json.load(f)
-                    return {**self.DEFAULTS, **data}
+                with open(self._config_path, "r", encoding="utf-8") as f:
+                    user_data = json.load(f)
+                    # Объединяем с дефолтами (новые ключи добавятся автоматически)
+                    return {**self.DEFAULTS, **user_data}
             except (json.JSONDecodeError, IOError):
                 pass
         return dict(self.DEFAULTS)
     
     def _save(self):
-        os.makedirs(self._dir, exist_ok=True)
-        with open(self._path, "w") as f:
-            json.dump(self._data, f, indent=2)
+        """Сохранить текущие настройки в файл."""
+        os.makedirs(self._config_dir, exist_ok=True)
+        with open(self._config_path, "w", encoding="utf-8") as f:
+            json.dump(self._data, f, indent=2, ensure_ascii=False)
     
     def get(self, key: str):
+        """Получить значение настройки.
+        
+        Args:
+            key: Имя параметра (см. DEFAULTS).
+            
+        Returns:
+            Значение настройки или значение по умолчанию.
+        """
         return self._data.get(key, self.DEFAULTS.get(key))
     
     def set(self, key: str, value):
+        """Установить значение настройки.
+        
+        Сохраняет файл и эмитит сигнал "changed" только если значение изменилось.
+        
+        Args:
+            key: Имя параметра.
+            value: Новое значение.
+        """
         if self._data.get(key) != value:
             self._data[key] = value
             self._save()
             self.emit("changed", key, value)
     
+    # === Вычисляемые свойства ===
+    
     @property
     def per_page(self) -> int:
+        """Количество элементов на одной странице сетки."""
         return self.get("columns") * self.get("rows")
+    
+    @property
+    def cell_size(self) -> tuple[int, int]:
+        """Размер одной ячейки сетки (ширина, высота) в пикселях."""
+        icon = self.get("icon_size")
+        return (icon + 20, icon + 40)
+    
+    @property
+    def grid_size(self) -> tuple[int, int]:
+        """Минимальный размер области сетки (ширина, высота) в пикселях."""
+        cols = self.get("columns")
+        rows = self.get("rows")
+        cell_w, cell_h = self.cell_size
+        width = cols * cell_w + (cols - 1) * 8 + 32   # 8px между ячейками, 32px отступы
+        height = rows * cell_h + (rows - 1) * 8 + 24
+        return (width, height)
+    
+    @property
+    def window_size(self) -> tuple[int, int]:
+        """Рекомендуемый размер окна приложения (ширина, высота) в пикселях."""
+        cols = self.get("columns")
+        rows = self.get("rows")
+        icon = self.get("icon_size")
+        width = cols * (icon + 32) + 48
+        height = rows * (icon + 48) + 80  # +80 для поиска и индикатора страниц
+        return (width, height)
 
 
+# Глобальный экземпляр конфигурации
 config = Config()
